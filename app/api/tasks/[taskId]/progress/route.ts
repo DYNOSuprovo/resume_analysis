@@ -3,10 +3,11 @@ import { prisma } from "@/lib/db";
 
 export async function POST(
     request: NextRequest,
-    { params }: { params: { taskId: string } }
+    props: { params: Promise<{ taskId: string }> }
 ) {
+    const params = await props.params;
+    const { taskId } = params;
     try {
-        const { taskId } = params;
         const body = await request.json();
         const { userId, status, timeSpent, notes } = body;
 
