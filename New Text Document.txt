@@ -1,0 +1,472 @@
+1️⃣ Product in one line
+
+A SaaS app where users upload their resume + goals, and an AI builds + tracks a personalized skill & project roadmap (with resources, deadlines, and progress).
+
+2️⃣ High-Level Architecture
+
+Frontend (Web app)
+
+Tech: React / Next.js (SPA with SSR if needed)
+
+Auth UI, dashboards, roadmap views, progress tracking, payments page
+
+Backend (inside Antigravity)
+
+API gateway (REST/GraphQL)
+
+Services:
+
+Auth & User service
+
+Resume Parsing & Profile Builder
+
+Roadmap Generator
+
+Resource Recommender (courses, projects, videos)
+
+Analytics & Progress Tracker
+
+Billing / Subscription (Stripe/Razorpay etc.)
+
+Data Layer
+
+Relational DB (PostgreSQL) for structured data
+
+Optional: Vector store (for resource embeddings & semantic search)
+
+AI Layer (Gemini)
+
+Resume summarizer & skill extractor
+
+Roadmap planner (multi-step reasoning)
+
+Chat-based career coach
+
+Resource explanation (“Why this course?”)
+
+3️⃣ Frontend Architecture (Next.js / React)
+Key Pages
+
+Landing Page
+
+Hero: “Turn your messy resume into a real roadmap.”
+
+CTAs: Sign up / Try demo
+
+Sections: Features, screenshots, testimonials, pricing
+
+Auth
+
+/login & /signup
+
+Social login (Google) + email/password
+
+Connects to backend /auth/* routes
+
+Onboarding Wizard
+Steps:
+
+Upload resume (PDF/Doc)
+
+Select goal (e.g., “Data Scientist”, “Backend dev”, “GSoC”, “FAANG SDE”)
+
+Preferred learning style (video/text/project-heavy)
+
+Time commitment (hrs/week)
+
+Dashboard
+
+Card: Current Goal & Level (Beginner / Intermediate / Advanced)
+
+Roadmap timeline
+
+“Today’s tasks”
+
+Streaks, stats, completion percentage
+
+Roadmap View
+
+Sections → Milestones → Tasks
+
+Example:
+
+Section: “Python Fundamentals”
+
+Milestones: “Control Flow”, “OOP”, “DSA basics”
+
+Tasks: “Finish this course”, “Solve 20 Easy LeetCode”, “Build XYZ project”
+
+Click to view details, attached resources, AI tips
+
+Resource Library
+
+Search-based list of recommended items
+
+Filters: free/paid, video/text, difficulty, duration
+
+AI Career Coach Chat
+
+Chat UI: left list of threads, right chat window
+
+Context: user profile + roadmap + progress passed in backend
+
+Settings & Billing
+
+Profile, goals, notifications
+
+Plan info, upgrade/downgrade
+
+4️⃣ Backend Architecture (Services / Modules)
+
+In Antigravity you can keep this as a single codebase with feature modules.
+
+4.1 Auth Service
+
+Sign up / login / refresh token
+
+Social auth via Google OAuth
+
+Permissions: free vs premium
+
+Endpoints:
+
+POST /auth/signup
+
+POST /auth/login
+
+POST /auth/google
+
+POST /auth/refresh
+
+POST /auth/logout
+
+4.2 User & Profile Service
+
+Stores:
+
+Basic info: name, email, country
+
+Professional info: experience, domain, desired role
+
+Skills: extracted + self-declared
+
+Constraints: hours/week, deadline (e.g., “6 months”)
+
+Endpoints:
+
+GET /me
+
+PUT /me
+
+GET /me/profile
+
+PUT /me/profile
+
+4.3 Resume Parsing Service
+
+Flow:
+
+User uploads file → frontend sends to backend
+
+Backend:
+
+Extracts raw text (Python: pypdf, python-docx, etc.)
+
+Sends text to Gemini with a structured extraction prompt
+
+Gemini returns JSON: {summary, skills, experience, projects, education}
+
+We store in DB and merge with existing profile.
+
+Endpoints:
+
+POST /resume/upload
+
+GET /resume/parsed
+
+4.4 Roadmap Generator Service
+
+This is the core AI brain.
+
+Inputs:
+
+User profile
+
+Skills (current vs target)
+
+Goal role (e.g. “ML Engineer”)
+
+Time horizon, hours/week
+
+LLM Prompt yields:
+
+Stages: Beginner → Intermediate → Advanced
+
+For each stage:
+
+Skills to learn
+
+Suggested resources (can be IDs that we map)
+
+Project ideas
+
+Estimated time
+
+Priority
+
+We store in DB as:
+
+roadmaps table:
+
+id, user_id, goal_role, created_at, status
+
+roadmap_sections table:
+
+id, roadmap_id, title, order
+
+roadmap_milestones:
+
+id, section_id, title, description, order
+
+roadmap_tasks:
+
+id, milestone_id, title, type (course, video, project, reading), resource_id, estimated_hours, order
+
+Endpoints:
+
+POST /roadmap/generate (calls Gemini)
+
+GET /roadmap/current
+
+GET /roadmap/:id
+
+4.5 Progress Tracking Service
+
+User actions:
+
+Mark task complete / in-progress
+
+Add notes
+
+Track time spent
+
+Tables:
+
+task_progress: user_id, task_id, status, time_spent
+
+roadmap_progress: computed from tasks
+
+Endpoints:
+
+POST /tasks/:taskId/progress
+
+GET /roadmap/:id/progress
+
+GET /stats/overview
+
+4.6 Resource Recommender & Knowledge Base
+
+Maintain a curated resources table:
+
+id, title, url, type (course, video, article, book), tags, cost, rating
+
+(Optional) Build vector embeddings over resource titles/descriptions for semantic matching with skills/goals.
+
+For a skill gap like “System Design”, query similar resources and attach.
+
+Endpoints:
+
+GET /resources?skill=python&difficulty=beginner
+
+POST /roadmap/:id/regenerate-section (to swap better resources)
+
+4.7 AI Coach Chat Service
+
+Chat history stored per user
+
+When user sends a message:
+
+Backend bundles: profile, current roadmap, recent progress
+
+Sends structured prompt to Gemini as a “coach”
+
+Endpoints:
+
+POST /chat
+
+GET /chat/history
+
+4.8 Billing / Subscription
+
+Integrate Stripe / Razorpay
+
+Plans:
+
+Free: 1 roadmap, limited chat per month
+
+Pro: unlimited roadmaps, advanced analytics, priority AI
+
+Webhook endpoint to handle payment confirmation.
+
+Endpoints:
+
+GET /billing/plans
+
+POST /billing/checkout
+
+POST /billing/webhook (Stripe/Razorpay)
+
+5️⃣ Database Schema (Rough)
+
+users
+
+id (PK)
+
+email (unique)
+
+password_hash / provider_id
+
+name
+
+role (user/admin)
+
+created_at
+
+profiles
+
+id
+
+user_id (FK)
+
+headline
+
+years_experience
+
+current_role
+
+target_role
+
+country
+
+weekly_hours
+
+target_deadline
+
+skills
+
+id
+
+name (e.g., “Python”, “DSA”, “System Design”)
+
+user_skills
+
+user_id, skill_id, level (beginner/intermediate/advanced), source (resume/manual)
+
+roadmaps, roadmap_sections, roadmap_milestones, roadmap_tasks
+(as described above)
+
+task_progress
+
+id
+
+user_id
+
+task_id
+
+status (todo/in_progress/done)
+
+time_spent
+
+updated_at
+
+chat_sessions, chat_messages
+
+session_id
+
+user_id
+
+role (user/assistant)
+
+content
+
+created_at
+
+billing_subscriptions
+
+user_id
+
+provider_customer_id
+
+plan
+
+status
+
+renew_at
+
+6️⃣ AI Integration (Gemini)
+
+You’ll likely have 3–4 system prompts:
+
+Resume Extractor
+
+Input: raw text
+
+Output: JSON {skills, experience, education, projects}
+
+Roadmap Generator
+
+Input: profile + current skills + goal + time
+
+Output: structured roadmap (we parse & store)
+
+Resource Mapper
+
+Input: skill gaps + resource catalog sample
+
+Output: ranking of which resources to attach where
+
+Coach Chat
+
+Input: user question + context (roadmap, progress)
+
+Output: conversational but structured coaching
+
+7️⃣ How This Fits into Antigravity Workflow
+
+Assuming Antigravity gives you:
+
+Cloud IDE
+
+App hosting (frontend + backend)
+
+Built-in Gemini access
+
+DB integration
+
+Your flow:
+
+Create project: monorepo with frontend/ + backend/.
+
+Backend in TypeScript / Python:
+
+Define REST APIs as above.
+
+Plug in Gemini SDK provided by Antigravity.
+
+Use its DB connector to Postgres.
+
+Frontend:
+
+Next.js app in frontend/
+
+Connect to backend via Antigravity’s base URL.
+
+Environment variables:
+
+GEMINI_API_KEY, STRIPE_SECRET, DB creds etc.
+
+Deploy:
+
+Antigravity handles hosting, scaling, SSL.
+
+Configure routes so /api/* goes to backend, others to frontend.

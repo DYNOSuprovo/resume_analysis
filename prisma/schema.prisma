@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  provider      String?   @default("credentials") // "credentials" or "google"
+  providerId    String?   // Google ID if OAuth
+  role          String    @default("user") // "user" or "admin"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  profile       Profile?
+  resumes       Resume[]
+  roadmaps      Roadmap[]
+  taskProgress  TaskProgress[]
+  chatSessions  ChatSession[]
+  subscription  Subscription?
+  userSkills    UserSkill[]
+}
+
+model Profile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  headline        String?
+  yearsExperience Int?
+  currentRole     String?
+  targetRole      String?
+  country         String?
+  weeklyHours     Int?      // Hours per week committed to learning
+  targetDeadline  DateTime? // Goal completion deadline
+  learningStyle   String?   // "video", "text", "project-heavy"
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Resume {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  fileName    String
+  fileUrl     String?  // If storing file in cloud storage
+  rawText     String   @db.Text
+  parsedData  Json     // {summary, skills, experience, projects, education}
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+}
+
+model Skill {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  category    String?     // "programming", "framework", "tool", "soft-skill"
+  
+  userSkills  UserSkill[]
+  resources   Resource[]
+}
+
+model UserSkill {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId   String
+  skill     Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  
+  level     String   // "beginner", "intermediate", "advanced"
+  source    String   @default("manual") // "resume", "manual", "roadmap"
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, skillId])
+  @@index([userId])
+}
+
+model Roadmap {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  goalRole    String            // "ML Engineer", "Full Stack Developer", etc.
+  status      String            @default("active") // "active", "completed", "archived"
+  
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  
+  sections    RoadmapSection[]
+  
+  @@index([userId])
+}
+
+model RoadmapSection {
+  id          String              @id @default(cuid())
+  roadmapId   String
+  roadmap     Roadmap             @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  
+  title       String              // "Python Fundamentals", "System Design"
+  description String?             @db.Text
+  order       Int
+  
+  milestones  RoadmapMilestone[]
+  
+  @@index([roadmapId])
+}
+
+model RoadmapMilestone {
+  id          String         @id @default(cuid())
+  sectionId   String
+  section     RoadmapSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  
+  title       String         // "Learn Control Flow", "Master OOP"
+  description String?        @db.Text
+  order       Int
+  
+  tasks       RoadmapTask[]
+  
+  @@index([sectionId])
+}
+
+model RoadmapTask {
+  id              String           @id @default(cuid())
+  milestoneId     String
+  milestone       RoadmapMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  
+  title           String
+  description     String?          @db.Text
+  type            String           // "course", "video", "project", "reading", "practice"
+  resourceId      String?
+  resource        Resource?        @relation(fields: [resourceId], references: [id])
+  estimatedHours  Float?
+  order           Int
+  aiTips          String?          @db.Text // AI-generated tips for this task
+  
+  progress        TaskProgress[]
+  
+  @@index([milestoneId])
+}
+
+model TaskProgress {
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId      String
+  task        RoadmapTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  status      String       @default("todo") // "todo", "in_progress", "done"
+  timeSpent   Float        @default(0) // Hours spent
+  notes       String?      @db.Text
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  @@unique([userId, taskId])
+  @@index([userId])
+  @@index([taskId])
+}
+
+model Resource {
+  id          String        @id @default(cuid())
+  title       String
+  url         String
+  type        String        // "course", "video", "article", "book", "documentation"
+  provider    String?       // "YouTube", "Coursera", "Udemy", "freeCodeCamp"
+  difficulty  String?       // "beginner", "intermediate", "advanced"
+  duration    String?       // "2 hours", "4 weeks"
+  cost        String        @default("free") // "free" or price
+  rating      Float?
+  description String?       @db.Text
+  tags        String[]
+  
+  skillId     String?
+  skill       Skill?        @relation(fields: [skillId], references: [id])
+  
+  tasks       RoadmapTask[]
+  
+  createdAt   DateTime      @default(now())
+  
+  @@index([skillId])
+  @@index([type])
+}
+
+model ChatSession {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title     String?       @default("New Conversation")
+  
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  
+  messages  ChatMessage[]
+  
+  @@index([userId])
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  role      String      // "user" or "assistant"
+  content   String      @db.Text
+  
+  createdAt DateTime    @default(now())
+  
+  @@index([sessionId])
+}
+
+model Subscription {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  providerCustomerId  String?  // Stripe customer ID
+  plan                String   @default("free") // "free", "pro"
+  status              String   @default("active") // "active", "canceled", "past_due"
+  renewAt             DateTime?
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
