@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function POST(
     request: NextRequest,
@@ -18,28 +18,26 @@ export async function POST(
             );
         }
 
-        // Update or create task progress
-        const progress = await prisma.taskProgress.upsert({
-            where: {
-                userId_taskId: {
-                    userId,
-                    taskId,
-                },
-            },
-            create: {
+        // Update or create task progress using Supabase
+        const { data: progress, error } = await supabase
+            .from('TaskProgress')
+            .upsert({
                 userId,
                 taskId,
                 status: status || "todo",
                 timeSpent: timeSpent || 0,
                 notes,
-            },
-            update: {
-                status,
-                timeSpent,
-                notes,
-                updatedAt: new Date(),
-            },
-        });
+                updatedAt: new Date().toISOString(),
+            }, {
+                onConflict: 'userId,taskId'
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error("Progress update error:", error);
+            throw new Error(error.message);
+        }
 
         return NextResponse.json({
             success: true,

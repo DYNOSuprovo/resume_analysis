@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { generateRoadmap } from "@/lib/gemini/roadmap-generator";
 
 export async function POST(request: NextRequest) {
@@ -15,19 +15,21 @@ export async function POST(request: NextRequest) {
         }
 
         // Get user's current skills
-        const userSkills = await prisma.userSkill.findMany({
-            where: { userId },
-            include: { skill: true },
-        });
+        const { data: userSkills } = await supabase
+            .from('UserSkill')
+            .select('*, skill:Skill(*)')
+            .eq('userId', userId);
 
-        const currentSkills = userSkills.map((us: { skill: { name: string } }) => us.skill.name);
+        const currentSkills = userSkills?.map((us: any) => us.skill.name) || [];
 
-        // Get user profile for experience level
-        const profile = await prisma.profile.findUnique({
-            where: { userId },
-        });
+        // Get user profile
+        const { data: profile } = await supabase
+            .from('Profile')
+            .select('*')
+            .eq('userId', userId)
+            .single();
 
-        // Generate roadmap using Gemini
+        // Generate roadmap using Groq AI
         const roadmapData = await generateRoadmap({
             currentSkills,
             targetRole,
@@ -37,49 +39,69 @@ export async function POST(request: NextRequest) {
             learningStyle: learningStyle || profile?.learningStyle || "balanced",
         });
 
-        // Create roadmap in database
-        const roadmap = await prisma.roadmap.create({
-            data: {
+        // Create roadmap
+        const { data: roadmap, error: roadmapError } = await supabase
+            .from('Roadmap')
+            .insert({
                 userId,
                 goalRole: targetRole,
                 status: "active",
-                sections: {
-                    create: roadmapData.sections.map((section: any) => ({
-                        title: section.title,
-                        description: section.description,
-                        order: section.order,
-                        milestones: {
-                            create: section.milestones.map((milestone: any) => ({
-                                title: milestone.title,
-                                description: milestone.description,
-                                order: milestone.order,
-                                tasks: {
-                                    create: milestone.tasks.map((task: any) => ({
-                                        title: task.title,
-                                        description: task.description,
-                                        type: task.type,
-                                        estimatedHours: task.estimatedHours,
-                                        order: task.order,
-                                        aiTips: task.aiTips,
-                                    })),
-                                },
-                            })),
-                        },
-                    })),
-                },
-            },
-            include: {
-                sections: {
-                    include: {
-                        milestones: {
-                            include: {
-                                tasks: true,
-                            },
-                        },
-                    },
-                },
-            },
-        });
+            })
+            .select()
+            .single();
+
+        if (roadmapError) throw new Error(roadmapError.message);
+
+        // Create sections
+        for (const section of roadmapData.sections) {
+            const { data: createdSection, error: sectionError } = await supabase
+                .from('Section')
+                .insert({
+                    roadmapId: roadmap.id,
+                    title: section.title,
+                    description: section.description,
+                    order: section.order,
+                })
+                .select()
+                .single();
+
+            if (sectionError) {
+                console.error("Section error:", sectionError);
+                continue;
+            }
+
+            // Create milestones for this section
+            for (const milestone of section.milestones) {
+                const { data: createdMilestone, error: milestoneError } = await supabase
+                    .from('Milestone')
+                    .insert({
+                        sectionId: createdSection.id,
+                        title: milestone.title,
+                        description: milestone.description,
+                        order: milestone.order,
+                    })
+                    .select()
+                    .single();
+
+                if (milestoneError) {
+                    console.error("Milestone error:", milestoneError);
+                    continue;
+                }
+
+                // Create tasks for this milestone
+                const tasks = milestone.tasks.map((task: any) => ({
+                    milestoneId: createdMilestone.id,
+                    title: task.title,
+                    description: task.description,
+                    type: task.type,
+                    estimatedHours: task.estimatedHours,
+                    order: task.order,
+                    aiTips: task.aiTips,
+                }));
+
+                await supabase.from('Task').insert(tasks);
+            }
+        }
 
         return NextResponse.json({
             success: true,
@@ -107,38 +129,29 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // Get user's active roadmap (most recent one)
-        const roadmap = await prisma.roadmap.findFirst({
-            where: {
-                userId,
-                status: "active",
-            },
-            orderBy: {
-                createdAt: "desc", // Get the LATEST roadmap
-            },
-            include: {
-                sections: {
-                    orderBy: { order: "asc" },
-                    include: {
-                        milestones: {
-                            orderBy: { order: "asc" },
-                            include: {
-                                tasks: {
-                                    orderBy: { order: "asc" },
-                                    include: {
-                                        progress: {
-                                            where: { userId },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        });
+        // Get user's active roadmap
+        const { data: roadmap, error } = await supabase
+            .from('Roadmap')
+            .select(`
+                *,
+                sections:Section(
+                    *,
+                    milestones:Milestone(
+                        *,
+                        tasks:Task(
+                            *,
+                            progress:TaskProgress(*)
+                        )
+                    )
+                )
+            `)
+            .eq('userId', userId)
+            .eq('status', 'active')
+            .order('createdAt', { ascending: false })
+            .limit(1)
+            .single();
 
-        if (!roadmap) {
+        if (error || !roadmap) {
             return NextResponse.json(
                 { error: "No active roadmap found" },
                 { status: 404 }

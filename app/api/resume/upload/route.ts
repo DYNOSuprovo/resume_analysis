@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { extractResumeText } from "@/lib/resume-parser";
 import { extractResumeData } from "@/lib/gemini/resume-extractor";
 
@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData();
         const file = formData.get("file") as File;
-        const userId = formData.get("userId") as string; // In production, get from auth session
+        const userId = formData.get("userId") as string;
 
         if (!file) {
             return NextResponse.json(
@@ -26,45 +26,66 @@ export async function POST(request: NextRequest) {
         // Extract text from file
         const rawText = await extractResumeText(file);
 
-        // Use Gemini to parse structured data
+        // Use Groq AI to parse structured data
         const parsedData = await extractResumeData(rawText);
 
-        // Save to database
-        const resume = await prisma.resume.create({
-            data: {
+        // Save to database using Supabase
+        const { data: resume, error: resumeError } = await supabase
+            .from('Resume')
+            .insert({
                 userId,
                 fileName: file.name,
                 rawText,
                 parsedData,
-            },
-        });
+            })
+            .select()
+            .single();
+
+        if (resumeError) {
+            console.error("Resume insert error:", resumeError);
+            throw new Error(resumeError.message);
+        }
 
         // Update user profile with extracted skills
         if (parsedData.skills && parsedData.skills.length > 0) {
-            // Create skills if they don't exist
             for (const skillName of parsedData.skills) {
-                const skill = await prisma.skill.upsert({
-                    where: { name: skillName },
-                    create: { name: skillName, category: "technical" },
-                    update: {},
-                });
+                // Check if skill exists
+                const { data: existingSkill } = await supabase
+                    .from('Skill')
+                    .select('*')
+                    .eq('name', skillName)
+                    .single();
 
-                // Link skill to user
-                await prisma.userSkill.upsert({
-                    where: {
-                        userId_skillId: {
-                            userId,
-                            skillId: skill.id,
-                        },
-                    },
-                    create: {
+                let skillId: string;
+
+                if (existingSkill) {
+                    skillId = existingSkill.id;
+                } else {
+                    // Create new skill
+                    const { data: newSkill, error: skillError } = await supabase
+                        .from('Skill')
+                        .insert({ name: skillName, category: "technical" })
+                        .select()
+                        .single();
+
+                    if (skillError) {
+                        console.error("Skill insert error:", skillError);
+                        continue; // Skip this skill if error
+                    }
+                    skillId = newSkill.id;
+                }
+
+                // Link skill to user (upsert)
+                await supabase
+                    .from('UserSkill')
+                    .upsert({
                         userId,
-                        skillId: skill.id,
-                        level: "intermediate", // Default, can be refined later
+                        skillId,
+                        level: "intermediate",
                         source: "resume",
-                    },
-                    update: {},
-                });
+                    }, {
+                        onConflict: 'userId,skillId'
+                    });
             }
         }
 
@@ -75,10 +96,6 @@ export async function POST(request: NextRequest) {
         });
     } catch (error: any) {
         console.error("Resume processing error:", error);
-        // Log deep error details from Gemini if available
-        if (error.response) {
-            console.error("Gemini Error Response:", JSON.stringify(error.response, null, 2));
-        }
         return NextResponse.json(
             { success: false, error: error.message || "Failed to process resume" },
             { status: 500 }
